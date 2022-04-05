@@ -7,4 +7,5 @@ The intent is to reproduce ther results.
 
 ## Training
 Open train.ipynb in google colab and follow instruction in the notebook
+The notebook just installs dependencies, clones the repo, and runs train.py. The model code is located in vgnn_models.py with some layers defined in layers.py.
 
