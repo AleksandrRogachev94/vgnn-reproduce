@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers import GraphAttentionLayer, LayerNorm
+from layers import MultiHeadedGraphAttentionLayer, LayerNorm
 
 if torch.cuda.is_available():
     device = 'cuda'
@@ -31,25 +31,17 @@ class VGNN(nn.Module):
 
         self.embed = nn.Embedding(self.input_features, enc_features, padding_idx=0)
 
-        # Single encoder layer attentions
-        # TODO support for multiple encoder layers
-        self.enc_att = [
-            GraphAttentionLayer(enc_features, enc_features, dropout=dropout, alpha=alpha, concat=True)
-            for _ in range(n_heads)
+        # Multiple multi-headed self-attention encoder layers.
+        self.encoder = [
+            MultiHeadedGraphAttentionLayer(enc_features, enc_features, n_heads, dropout, alpha, 'encoder_attention_{}'.format(i), concat=True)
+            for i in range(n_layers)
         ]
-        for i, attention in enumerate(self.enc_att):
-            self.add_module('encoder_attention_1_{}'.format(i), attention)
+        for i, attention in enumerate(self.encoder):
+            self.add_module('encoder_{}'.format(i), attention)
 
-        # Single decoder layer attentions
-        # TODO support for multiple decoder layers
-        self.dec_att = [
-            GraphAttentionLayer(enc_features * n_heads, dec_features, dropout=dropout, alpha=alpha, concat=False)
-            for _ in range(n_heads)
-        ]
-        for i, attention in enumerate(self.dec_att):
-            self.add_module('decoder_attention_1_{}'.format(i), attention)
-
-        self.dropout = nn.Dropout(dropout)
+        # Single multi-headed self-attention decoder layer
+        self.decoder = MultiHeadedGraphAttentionLayer(enc_features * n_heads, dec_features, n_heads, dropout, alpha,
+                                                      "decoder_attention_1", concat=False)
 
         # Layer normalization for encoder and decoder
         self.norm_enc = LayerNorm(enc_features * n_heads)
@@ -103,12 +95,13 @@ class VGNN(nn.Module):
             data_item = data[i, self.none_graph_features:]
             input_edges, output_edges = self.data_to_edges(data_item)
             # Embed
-            embedded = self.embed(torch.arange(self.input_features).long().to(device))
+            encoded = self.embed(torch.arange(self.input_features).long().to(device))
             # Encode
-            encoded = torch.cat([att(embedded, input_edges) for att in self.enc_att], dim=1)
-            encoded = F.elu(self.norm_enc(encoded))
+            for encoder_layer in self.encoder:
+                encoded = encoder_layer(encoded, input_edges)
+                encoded = F.elu(self.norm_enc(encoded))
             # Decode
-            decoded = torch.stack([att(encoded, output_edges) for att in self.dec_att], dim=0).mean(dim=0)
+            decoded = self.decoder(encoded, output_edges)
             # In my understanding, "V" combines all nodes together in the last "decoder" node.
             # Not 100% convinced about the need for it.
             decoded = self.V(F.relu(self.norm_dec(decoded)))

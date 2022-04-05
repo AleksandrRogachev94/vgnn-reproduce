@@ -18,6 +18,7 @@ else:
     device = 'cpu'
 print(device)
 
+# TODO remove. Just for testing
 torch.manual_seed(0)
 
 def main():
