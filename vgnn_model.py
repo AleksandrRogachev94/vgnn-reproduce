@@ -9,60 +9,67 @@ else:
     device = 'cpu'
 
 class VGNN(nn.Module):
-
     def __init__(self, input_features, enc_features, dec_features, n_heads, n_layers,
                  dropout, alpha, variational=True, none_graph_features=0):
         super(VGNN, self).__init__()
 
-        self.variational = variational
-        self.n_heads = n_heads
-        self.n_layers = n_layers
-        self.input_features = input_features
-        self.enc_features = enc_features
-        self.dec_features = dec_features
-        self.none_graph_features = none_graph_features
+        self.variational = variational  # whether the model is variational
+        self.n_heads = n_heads  # number of heads for encoder and decoder self-attention layers
+        # TODO not used yet. Single layer
+        self.n_layers = n_layers  # number of graph network layers
+        self.input_features = input_features  # dimensionality of input
+        self.enc_features = enc_features  # dimensionality of encoder
+        self.dec_features = dec_features  # dimensionality of decoder
+        # TODO not properly used yet - affects eICU only.
+        # According to the original code, we should handle the first feature of eICU differently (readmission)
+        # But the way they handled it is confusing - needs more investigation
+        self.none_graph_features = none_graph_features  # number of first features to exclude from encoder/decoder
 
-        # + 1 for the additional node in the decoder (m = 1 in the paper)
+        # + 1 for the "new" node in the decoder (m = 1 in the paper).
+        # This new node is fully connected with all encoder output nodes
         self.input_features = input_features + 1 - none_graph_features
 
         self.embed = nn.Embedding(self.input_features, enc_features, padding_idx=0)
 
         # Single encoder layer attentions
+        # TODO support for multiple encoder layers
         self.enc_att = [
             GraphAttentionLayer(enc_features, enc_features, dropout=dropout, alpha=alpha, concat=True)
             for _ in range(n_heads)
         ]
         for i, attention in enumerate(self.enc_att):
-            # TODO adjust name to handle multiple layers
-            self.add_module('encoder_attention_{}'.format(i), attention)
+            self.add_module('encoder_attention_1_{}'.format(i), attention)
 
         # Single decoder layer attentions
+        # TODO support for multiple decoder layers
         self.dec_att = [
             GraphAttentionLayer(enc_features * n_heads, dec_features, dropout=dropout, alpha=alpha, concat=False)
             for _ in range(n_heads)
         ]
         for i, attention in enumerate(self.dec_att):
-            # TODO adjust name to handle multiple layers
-            self.add_module('decoder_attention_{}'.format(i), attention)
-
-        # TODO handle the readmission feature
+            self.add_module('decoder_attention_1_{}'.format(i), attention)
 
         self.dropout = nn.Dropout(dropout)
 
         # Layer normalization for encoder and decoder
         self.norm_enc = LayerNorm(enc_features * n_heads)
+        # not multiplied by n_heads because decoder takes an average of heads
         self.norm_dec = LayerNorm(dec_features)
 
-        # Linear combination of the decoded nodes (see forward for more details)
+        # Linear combination of the decoded nodes (see "forward" for more details)
+        # TODO I have a strong feeling this transformation is redundant. Just copied it from the original code
         self.V = nn.Linear(dec_features, dec_features)
-        # final fully connected layer that returns prediction
+        # final fully connected layer that returns a single prediction
         self.out_layer = nn.Sequential(
             nn.Linear(dec_features, dec_features),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(dec_features, 1))
 
-    # TODO REFACTOR THIS
+    # TODO REFACTOR THIS METHOD. Pretty much copied from paper as-is
+    # But the intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
+    # input_edges - sparse representation of edges between existing nodes. Used in encoder
+    # output_edges - sparse representation of edges between existing nodes + 1 new decoder node (m = 1 in paper). Used in decoder
     def data_to_edges(self, data):
         length = data.size()[0]
         nonzero = data.nonzero()
@@ -88,13 +95,6 @@ class VGNN(nn.Module):
                                   .contiguous().view((1, lengths ** 2))), dim=0)
         return input_edges.to(device), output_edges.to(device)
 
-        input_edges2 = torch.zeros(data.shape[0] + 1, data.shape[0] + 1)
-        for i in range(input_edges.shape[1]):
-            input_edges2[input_edges[0][i], input_edges[1][i]] = 1
-        output_edges2 = torch.zeros(data.shape[0] + 1, data.shape[0] + 1)
-        for i in range(output_edges.shape[1]):
-            output_edges2[output_edges[0][i], output_edges[1][i]] = 1
-        return input_edges2.to(device), output_edges2.to(device)
 
     def forward(self, data):
         batch_decoded = []
@@ -115,6 +115,6 @@ class VGNN(nn.Module):
             # leave only the last node, "decoder"
             batch_decoded.append(decoded[-1])
 
-        # Apply fully connected layers to the final node representation to get prediction
+        # Apply fully connected layers to the final node representation to get a single prediction
         prediction = self.out_layer(torch.stack([decoded for decoded in batch_decoded]))
         return prediction, torch.tensor(0.0)

@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.4, help='dropout')
     parser.add_argument('--reg', type=str, default="True", help='regularization')
     parser.add_argument('--lbd', type=int, default=1.0, help='regularization')
+    parser.add_argument('--model', type=int, default=1.0, help='regularization')
 
     args = parser.parse_args()
     result_path = args.result_path
@@ -89,7 +90,6 @@ def main():
         model.train()
         total_loss = np.zeros(3)
         for idx, batch_data in enumerate(t):
-            # print('->1', batch_data.shape)
             loss, kld, bce = train(batch_data, model, optimizer, criterion, args.lbd, 5)
             total_loss += np.array([loss, bce, kld])
             if idx % eval_freq == 0 and idx > 0:
