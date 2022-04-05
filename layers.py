@@ -96,6 +96,12 @@ class MultiHeadedGraphAttentionLayer(nn.Module):
         for i, attention in enumerate(self.attentions):
             self.add_module('{}_{}'.format(name, i), attention)
 
+        if concat:
+            self.norm = LayerNorm(out_features * num_heads)
+        else:
+            # not multiplied by num_heads because we take an average of heads
+            self.norm = LayerNorm(out_features)
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, h, adj):
@@ -105,4 +111,5 @@ class MultiHeadedGraphAttentionLayer(nn.Module):
         else:
             h_prime = torch.stack(h_prime, dim=0).mean(dim=0)
         h_prime = self.dropout(h_prime)
+        h_prime = self.norm(h_prime)
         return h_prime

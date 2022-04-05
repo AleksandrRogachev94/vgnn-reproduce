@@ -43,11 +43,6 @@ class VGNN(nn.Module):
         self.decoder = MultiHeadedGraphAttentionLayer(enc_features * n_heads, dec_features, n_heads, dropout, alpha,
                                                       "decoder_attention_1", concat=False)
 
-        # Layer normalization for encoder and decoder
-        self.norm_enc = LayerNorm(enc_features * n_heads)
-        # not multiplied by n_heads because decoder takes an average of heads
-        self.norm_dec = LayerNorm(dec_features)
-
         # Linear combination of the decoded nodes (see "forward" for more details)
         # TODO I have a strong feeling this transformation is redundant. Just copied it from the original code
         self.V = nn.Linear(dec_features, dec_features)
@@ -99,12 +94,13 @@ class VGNN(nn.Module):
             # Encode
             for encoder_layer in self.encoder:
                 encoded = encoder_layer(encoded, input_edges)
-                encoded = F.elu(self.norm_enc(encoded))
+                encoded = F.elu(encoded)
+
             # Decode
             decoded = self.decoder(encoded, output_edges)
             # In my understanding, "V" combines all nodes together in the last "decoder" node.
             # Not 100% convinced about the need for it.
-            decoded = self.V(F.relu(self.norm_dec(decoded)))
+            decoded = self.V(F.relu(decoded))
             # leave only the last node, "decoder"
             batch_decoded.append(decoded[-1])
 
