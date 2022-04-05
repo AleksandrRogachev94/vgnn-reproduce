@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.4, help='dropout')
     parser.add_argument('--reg', type=str, default="True", help='regularization')
     parser.add_argument('--lbd', type=int, default=1.0, help='regularization')
-    parser.add_argument('--model', type=int, default=1.0, help='regularization')
+    parser.add_argument('--model_path', type=str, default=None, help='Path to checkpoint of trained model')
 
     args = parser.parse_args()
     result_path = args.result_path
@@ -46,8 +46,8 @@ def main():
     dropout = args.dropout
     alpha = 0.1
     BATCH_SIZE = args.batch_size
+    model_path = args.model_path
     number_of_epochs = 50
-    eval_freq = 200
 
     # Load data
     train_x, train_y = pickle.load(open(data_path + 'train_csr.pkl', 'rb'))
@@ -73,13 +73,22 @@ def main():
     model = VGNN(train_x.shape[1], enc_features, dec_features, n_heads, n_layers,
                            dropout=dropout, alpha=alpha, variational=args.reg, none_graph_features=0).to(device)
     model = nn.DataParallel(model, device_ids=device_ids)
+
+    # Load existing model, take into account the last epoch
+    init_epoch = 0
+    if model_path:
+        model.load_state_dict(torch.load(model_path))
+        init_epoch = int(model_path.split('_')[-1]) + 1
+        print('Loaded existing model from: {}'.format(model_path))
+        print('Continue training from epoch: {}'.format(init_epoch))
+
     val_loader = DataLoader(dataset=EHRData(val_x, val_y), batch_size=BATCH_SIZE,
                             collate_fn=collate_fn, num_workers=torch.cuda.device_count(), shuffle=False)
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=1e-8)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
     # Train models
-    for epoch in range(number_of_epochs):
+    for epoch in range(init_epoch, number_of_epochs, 1):
         print("Learning rate:{}".format(optimizer.param_groups[0]['lr']))
         ratio = Counter(train_y)
         train_loader = DataLoader(dataset=EHRData(train_x, train_y), batch_size=BATCH_SIZE,
@@ -92,17 +101,18 @@ def main():
         for idx, batch_data in enumerate(t):
             loss, kld, bce = train(batch_data, model, optimizer, criterion, args.lbd, 5)
             total_loss += np.array([loss, bce, kld])
-            if idx % eval_freq == 0 and idx > 0:
-                torch.save(model.state_dict(), "{}/parameter{}_{}".format(result_root, epoch, idx))
-                val_auprc, _ = evaluate(model, val_loader, len(val_y))
-                logging.info('epoch:%d AUPRC:%f; loss: %.4f, bce: %.4f, kld: %.4f' %
-                             (epoch + 1, val_auprc, total_loss[0]/idx, total_loss[1]/idx, total_loss[2]/idx))
-                print('epoch:%d AUPRC:%f; loss: %.4f, bce: %.4f, kld: %.4f' %
-                      (epoch + 1, val_auprc, total_loss[0]/idx, total_loss[1]/idx, total_loss[2]/idx))
             if idx % 50 == 0 and idx > 0:
                 t.set_description('[epoch:%d] loss: %.4f, bce: %.4f, kld: %.4f' %
                                   (epoch + 1, total_loss[0]/idx, total_loss[1]/idx, total_loss[2]/idx))
                 t.refresh()
+
+        torch.save(model.state_dict(), "{}/parameter_epoch_{}".format(result_root, epoch))
+        val_auprc, _ = evaluate(model, val_loader, len(val_y))
+        logging.info('epoch:%d AUPRC:%f; loss: %.4f, bce: %.4f, kld: %.4f' %
+                     (epoch + 1, val_auprc, total_loss[0] / idx, total_loss[1] / idx, total_loss[2] / idx))
+        print('epoch:%d AUPRC:%f; loss: %.4f, bce: %.4f, kld: %.4f' %
+              (epoch + 1, val_auprc, total_loss[0] / idx, total_loss[1] / idx, total_loss[2] / idx))
+
         scheduler.step()
 
 

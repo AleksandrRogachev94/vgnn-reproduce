@@ -162,5 +162,6 @@ cython_debug/
 # project-specific
 data/eicu/eicu_data/
 data/mimic/mimic_data/
+output/
 
 .DS_Store
