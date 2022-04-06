@@ -34,6 +34,7 @@ def main():
     parser.add_argument('--reg', type=str, default="True", help='regularization')
     parser.add_argument('--lbd', type=int, default=1.0, help='regularization')
     parser.add_argument('--model_path', type=str, default=None, help='Path to checkpoint of trained model')
+    parser.add_argument('--none_graph_features', type=int, default=0, help='...')
 
     args = parser.parse_args()
     result_path = args.result_path
@@ -48,6 +49,7 @@ def main():
     alpha = 0.1
     BATCH_SIZE = args.batch_size
     model_path = args.model_path
+    none_graph_features = args.none_graph_features
     number_of_epochs = 50
 
     # Load data
@@ -72,7 +74,7 @@ def main():
     device_ids = range(torch.cuda.device_count())
     # eICU has 1 feature on previous readmission that we didn't include in the graph
     model = VGNN(train_x.shape[1], enc_features, dec_features, n_heads, n_layers,
-                           dropout=dropout, alpha=alpha, variational=args.reg, none_graph_features=0).to(device)
+                           dropout=dropout, alpha=alpha, variational=args.reg, none_graph_features=none_graph_features).to(device)
     model = nn.DataParallel(model, device_ids=device_ids)
 
     # Load existing model, take into account the last epoch
