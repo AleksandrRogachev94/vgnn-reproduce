@@ -21,18 +21,13 @@ class LayerNorm(nn.Module):
         return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
 
-# Single self-attention head.
+# Single sparse self-attention head.
 class GraphAttentionLayer(nn.Module):
-    """
-    Simple GAT layer, similar to https://arxiv.org/abs/1710.10903
-    """
-    def __init__(self, in_features, out_features, dropout, alpha, concat=True):
+    def __init__(self, in_features, out_features, alpha):
         super(GraphAttentionLayer, self).__init__()
-        self.dropout = dropout
         self.in_features = in_features
         self.out_features = out_features
         self.alpha = alpha
-        self.concat = concat
 
         # Weights matrix
         self.W = nn.Linear(in_features, out_features)
@@ -65,6 +60,7 @@ class GraphAttentionLayer(nn.Module):
         row_check = e_rowsum == 0
         e_rowsum[row_check] = 1
         zero_idx = row_check.nonzero()[:, 0]
+        # for missing nodes, ensure that attention is 1 for node itself.
         edge_e = edge_e.add(
             torch.sparse.FloatTensor(zero_idx.repeat(2, 1), torch.ones(len(zero_idx)).to(device), torch.Size([N, N])))
         # edge_e: E
@@ -81,3 +77,39 @@ class GraphAttentionLayer(nn.Module):
 
     def __repr__(self):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
+
+
+# Multi-headed self-attention layer
+class MultiHeadedGraphAttentionLayer(nn.Module):
+    def __init__(self, in_features, out_features, num_heads, dropout, alpha, name, concat=True):
+        super(MultiHeadedGraphAttentionLayer, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_heads = num_heads
+        self.alpha = alpha
+        self.concat = concat
+
+        self.attentions = [
+            GraphAttentionLayer(in_features, out_features, alpha=alpha)
+            for _ in range(num_heads)
+        ]
+        for i, attention in enumerate(self.attentions):
+            self.add_module('{}_{}'.format(name, i), attention)
+
+        if concat:
+            self.norm = LayerNorm(out_features * num_heads)
+        else:
+            # not multiplied by num_heads because we take an average of heads
+            self.norm = LayerNorm(out_features)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, h, adj):
+        h_prime = [att(h, adj) for att in self.attentions]
+        if self.concat:
+            h_prime = torch.cat(h_prime, dim=1)
+        else:
+            h_prime = torch.stack(h_prime, dim=0).mean(dim=0)
+        h_prime = self.dropout(h_prime)
+        h_prime = self.norm(h_prime)
+        return h_prime

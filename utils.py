@@ -12,7 +12,6 @@ print(device)
 
 def train(data, model, optim, criterion, lbd, max_clip_norm=5):
     model.train()
-    # XXX why not include last element
     input = data[:, :-1].to(device)
     label = data[:, -1].float().to(device)
     model.train()
