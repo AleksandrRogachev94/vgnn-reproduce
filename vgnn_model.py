@@ -43,11 +43,7 @@ class VGNN(nn.Module):
         self.decoder = MultiHeadedGraphAttentionLayer(enc_features * n_heads, dec_features, n_heads, dropout, alpha,
                                                       "decoder_attention_1", concat=False)
 
-        # Linear combination of the decoded nodes (see "forward" for more details)
-        # TODO I have a strong feeling this transformation is redundant. Just copied it from the original code
-        self.V = nn.Linear(dec_features, dec_features)
         # final fully connected layer that returns a single prediction
-
         if self.none_graph_features > 0:
             # combine graph and non-graph features
             none_graph_hidden_features = dec_features // 2
@@ -114,9 +110,7 @@ class VGNN(nn.Module):
                 encoded = F.elu(encoded)
             # Decode
             decoded = self.decoder(encoded, output_edges)
-            # In my understanding, "V" combines all nodes together in the last "decoder" node.
-            # Not 100% convinced about the need for it.
-            decoded = F.relu(self.V(F.relu(decoded)))
+            decoded = F.relu(decoded)
             # leave only the last node, "decoder"
             decoded = decoded[-1]
 
