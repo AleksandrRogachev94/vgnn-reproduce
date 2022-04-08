@@ -130,7 +130,7 @@ class VGNN(nn.Module):
                 kld.append(-0.5 * torch.sum(1 + sigma - mean.pow(2) - sigma.exp()) / mean.shape[0])
 
             # concat original nodes and the new decoder node representation
-            encoded = torch.concat((encoded, embedded[-1].view(1, -1)))
+            encoded = torch.cat((encoded, embedded[-1].view(1, -1)))
 
             # Decode
             decoded = self.decoder(encoded, output_edges)
