@@ -123,7 +123,7 @@ class VGNN(nn.Module):
             if self.variational:
                 parametrized = self.parameterize(encoded)
                 mean = parametrized[:, :self.dec_features]
-                sigma = parametrized[:, :self.dec_features:]
+                sigma = parametrized[:, self.dec_features:]
                 encoded = self.reparametrize(mean, sigma)
                 mean = mean[graph_item == 1]
                 sigma = sigma[graph_item == 1]
