@@ -17,19 +17,17 @@ class VGNN(nn.Module):
         self.n_heads = n_heads  # number of heads for encoder and decoder self-attention layers
         # TODO not used yet. Single layer
         self.n_layers = n_layers  # number of graph network layers
-        self.input_features = input_features  # dimensionality of input
         self.enc_features = enc_features  # dimensionality of encoder
         self.dec_features = dec_features  # dimensionality of decoder
         # According to the original code, we should handle the first feature of eICU differently (previous readmission)
         # This variable allows us to exclude the first n features from graph layers.
         # It is processed by separately by a fully connected layer
         self.none_graph_features = none_graph_features  # number of first features to exclude from encoder/decoder
+        self.input_features = input_features - none_graph_features
 
         # + 1 for the "new" node in the decoder (m = 1 in the paper).
         # This new node is fully connected with all encoder output nodes
-        self.input_features = input_features + 1 - none_graph_features
-
-        self.embed = nn.Embedding(self.input_features, enc_features, padding_idx=0)
+        self.embed = nn.Embedding(self.input_features + 1, enc_features, padding_idx=0)
 
         # Multiple multi-headed self-attention encoder layers.
         self.encoder = [
@@ -65,6 +63,9 @@ class VGNN(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(dec_features, 1))
 
+        if self.variational:
+            self.parameterize = nn.Linear(dec_features, dec_features * 2)
+
 
     # TODO REFACTOR THIS METHOD. Pretty much copied from paper as-is
     # But the intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
@@ -95,19 +96,42 @@ class VGNN(nn.Module):
                                   .contiguous().view((1, lengths ** 2))), dim=0)
         return input_edges.to(device), output_edges.to(device)
 
+    def reparametrize(self, mean, sigma):
+        if self.training:
+            # generate non-differentiable epsilon from standard normal distribution
+            eps = torch.randn_like(mean)
+            return eps * sigma + mean
+        else:
+            return mean
+
 
     def forward(self, data):
         batch_decoded = []
+        kld = []  # KL-divergence
         # sequential encode-decode logic for each item in the batch
         for i in range(data.shape[0]):
             graph_item = data[i, self.none_graph_features:]
             input_edges, output_edges = self.data_to_edges(graph_item)
             # Embed
-            encoded = self.embed(torch.arange(self.input_features).long().to(device))
+            embedded = self.embed(torch.arange(self.input_features + 1).long().to(device))
+            encoded = embedded[:-1]
             # Encode
             for encoder_layer in self.encoder:
                 encoded = encoder_layer(encoded, input_edges)
                 encoded = F.elu(encoded)
+
+            if self.variational:
+                parametrized = self.parameterize(encoded)
+                mean = parametrized[:, :self.dec_features]
+                sigma = parametrized[:, :self.dec_features:]
+                encoded = self.reparametrize(mean, sigma)
+                mean = mean[graph_item == 1]
+                sigma = sigma[graph_item == 1]
+                kld.append(-0.5 * torch.sum(1 + sigma - mean.pow(2) - sigma.exp()) / mean.shape[0])
+
+            # concat original nodes and the new decoder node representation
+            encoded = torch.concat((encoded, embedded[-1].view(1, -1)))
+
             # Decode
             decoded = self.decoder(encoded, output_edges)
             decoded = F.relu(decoded)
@@ -123,4 +147,5 @@ class VGNN(nn.Module):
 
         # Apply fully connected layers to the final node representation to get a single prediction
         prediction = self.out_layer(torch.stack([decoded for decoded in batch_decoded]))
-        return prediction, torch.tensor(0.0)
+        total_kld = torch.sum(torch.FloatTensor(kld))
+        return prediction, total_kld
