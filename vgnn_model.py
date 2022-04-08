@@ -100,7 +100,7 @@ class VGNN(nn.Module):
         if self.training:
             # generate non-differentiable epsilon from standard normal distribution
             eps = torch.randn_like(mean)
-            return eps * sigma + mean
+            return eps * sigma.exp() * 0.5 + mean
         else:
             return mean
 
