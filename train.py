@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=32, help='batch_size')
     parser.add_argument('--dropout', type=float, default=0.4, help='dropout')
     parser.add_argument('--reg', type=str, default="True", help='regularization')
-    parser.add_argument('--lbd', type=int, default=1.0, help='regularization')
+    parser.add_argument('--lbd', type=float, default=1.0, help='regularization')
     parser.add_argument('--model_path', type=str, default=None, help='Path to checkpoint of trained model')
     parser.add_argument('--none_graph_features', type=int, default=0, help='...')
 
