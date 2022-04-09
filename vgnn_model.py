@@ -15,7 +15,6 @@ class VGNN(nn.Module):
 
         self.variational = variational  # whether the model is variational
         self.n_heads = n_heads  # number of heads for encoder and decoder self-attention layers
-        # TODO not used yet. Single layer
         self.n_layers = n_layers  # number of graph network layers
         self.enc_features = enc_features  # dimensionality of encoder
         self.dec_features = dec_features  # dimensionality of decoder
@@ -64,11 +63,11 @@ class VGNN(nn.Module):
                 nn.Linear(dec_features, 1))
 
         if self.variational:
-            self.parameterize = nn.Linear(dec_features, dec_features * 2)
+            self.parameterize = nn.Linear(enc_features * n_heads, enc_features * n_heads * 2)
+            self.dropout = nn.Dropout(dropout)
 
 
-    # TODO REFACTOR THIS METHOD. Pretty much copied from paper as-is
-    # But the intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
+    # The intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
     # input_edges - sparse representation of edges between existing nodes. Used in encoder
     # output_edges - sparse representation of edges between existing nodes + 1 new decoder node (m = 1 in paper). Used in decoder
     def data_to_edges(self, data):
@@ -98,7 +97,7 @@ class VGNN(nn.Module):
 
     def reparametrize(self, mean, sigma):
         if self.training:
-            # generate non-differentiable epsilon from standard normal distribution
+            # generate non-trainable random parameter epsilon from standard normal distribution
             eps = torch.randn_like(mean)
             return eps * sigma.exp() * 0.5 + mean
         else:
@@ -122,12 +121,13 @@ class VGNN(nn.Module):
 
             if self.variational:
                 parametrized = self.parameterize(encoded)
+                parametrized = self.dropout(parametrized)
                 mean = parametrized[:, :self.dec_features]
                 sigma = parametrized[:, self.dec_features:]
                 encoded = self.reparametrize(mean, sigma)
                 mean = mean[graph_item == 1]
                 sigma = sigma[graph_item == 1]
-                kld.append(-0.5 * torch.sum(1 + sigma - mean.pow(2) - sigma.exp()) / mean.shape[0])
+                kld.append(0.5 * torch.sum(sigma.exp() - sigma - 1 + mean.pow(2)) / mean.size()[0])
 
             # concat original nodes and the new decoder node representation
             encoded = torch.cat((encoded, embedded[-1].view(1, -1)))
@@ -146,6 +146,7 @@ class VGNN(nn.Module):
             batch_decoded.append(decoded)
 
         # Apply fully connected layers to the final node representation to get a single prediction
-        prediction = self.out_layer(torch.stack([decoded for decoded in batch_decoded]))
-        total_kld = torch.sum(torch.FloatTensor(kld))
+        prediction = self.out_layer(torch.stack(batch_decoded))
+        total_kld = torch.sum(torch.stack(kld))
         return prediction, total_kld
+    
