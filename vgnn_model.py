@@ -15,21 +15,18 @@ class VGNN(nn.Module):
 
         self.variational = variational  # whether the model is variational
         self.n_heads = n_heads  # number of heads for encoder and decoder self-attention layers
-        # TODO not used yet. Single layer
         self.n_layers = n_layers  # number of graph network layers
-        self.input_features = input_features  # dimensionality of input
         self.enc_features = enc_features  # dimensionality of encoder
         self.dec_features = dec_features  # dimensionality of decoder
         # According to the original code, we should handle the first feature of eICU differently (previous readmission)
         # This variable allows us to exclude the first n features from graph layers.
         # It is processed by separately by a fully connected layer
         self.none_graph_features = none_graph_features  # number of first features to exclude from encoder/decoder
+        self.input_features = input_features - none_graph_features
 
         # + 1 for the "new" node in the decoder (m = 1 in the paper).
         # This new node is fully connected with all encoder output nodes
-        self.input_features = input_features + 1 - none_graph_features
-
-        self.embed = nn.Embedding(self.input_features, enc_features, padding_idx=0)
+        self.embed = nn.Embedding(self.input_features + 1, enc_features, padding_idx=0)
 
         # Multiple multi-headed self-attention encoder layers.
         self.encoder = [
@@ -43,11 +40,7 @@ class VGNN(nn.Module):
         self.decoder = MultiHeadedGraphAttentionLayer(enc_features * n_heads, dec_features, n_heads, dropout, alpha,
                                                       "decoder_attention_1", concat=False)
 
-        # Linear combination of the decoded nodes (see "forward" for more details)
-        # TODO I have a strong feeling this transformation is redundant. Just copied it from the original code
-        self.V = nn.Linear(dec_features, dec_features)
         # final fully connected layer that returns a single prediction
-
         if self.none_graph_features > 0:
             # combine graph and non-graph features
             none_graph_hidden_features = dec_features // 2
@@ -69,9 +62,12 @@ class VGNN(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(dec_features, 1))
 
+        if self.variational:
+            self.parameterize = nn.Linear(enc_features * n_heads, enc_features * n_heads * 2)
+            self.dropout = nn.Dropout(dropout)
 
-    # TODO REFACTOR THIS METHOD. Pretty much copied from paper as-is
-    # But the intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
+
+    # The intent of this function is to take a data sample (shape = (input_features)) and fully connect all existing nodes
     # input_edges - sparse representation of edges between existing nodes. Used in encoder
     # output_edges - sparse representation of edges between existing nodes + 1 new decoder node (m = 1 in paper). Used in decoder
     def data_to_edges(self, data):
@@ -99,24 +95,46 @@ class VGNN(nn.Module):
                                   .contiguous().view((1, lengths ** 2))), dim=0)
         return input_edges.to(device), output_edges.to(device)
 
+    def reparametrize(self, mean, sigma):
+        if self.training:
+            # generate non-trainable random parameter epsilon from standard normal distribution
+            eps = torch.randn_like(mean)
+            return eps * sigma.exp() * 0.5 + mean
+        else:
+            return mean
+
 
     def forward(self, data):
         batch_decoded = []
+        kld = []  # KL-divergence
         # sequential encode-decode logic for each item in the batch
         for i in range(data.shape[0]):
             graph_item = data[i, self.none_graph_features:]
             input_edges, output_edges = self.data_to_edges(graph_item)
             # Embed
-            encoded = self.embed(torch.arange(self.input_features).long().to(device))
+            embedded = self.embed(torch.arange(self.input_features + 1).long().to(device))
+            encoded = embedded[:-1]
             # Encode
             for encoder_layer in self.encoder:
                 encoded = encoder_layer(encoded, input_edges)
                 encoded = F.elu(encoded)
+
+            if self.variational:
+                parametrized = self.parameterize(encoded)
+                parametrized = self.dropout(parametrized)
+                mean = parametrized[:, :self.dec_features]
+                sigma = parametrized[:, self.dec_features:]
+                encoded = self.reparametrize(mean, sigma)
+                mean = mean[graph_item == 1]
+                sigma = sigma[graph_item == 1]
+                kld.append(0.5 * torch.sum(sigma.exp() - sigma - 1 + mean.pow(2)) / mean.size()[0])
+
+            # concat original nodes and the new decoder node representation
+            encoded = torch.cat((encoded, embedded[-1].view(1, -1)))
+
             # Decode
             decoded = self.decoder(encoded, output_edges)
-            # In my understanding, "V" combines all nodes together in the last "decoder" node.
-            # Not 100% convinced about the need for it.
-            decoded = F.relu(self.V(F.relu(decoded)))
+            decoded = F.relu(decoded)
             # leave only the last node, "decoder"
             decoded = decoded[-1]
 
@@ -128,5 +146,7 @@ class VGNN(nn.Module):
             batch_decoded.append(decoded)
 
         # Apply fully connected layers to the final node representation to get a single prediction
-        prediction = self.out_layer(torch.stack([decoded for decoded in batch_decoded]))
-        return prediction, torch.tensor(0.0)
+        prediction = self.out_layer(torch.stack(batch_decoded))
+        total_kld = torch.sum(torch.stack(kld))
+        return prediction, total_kld
+    
