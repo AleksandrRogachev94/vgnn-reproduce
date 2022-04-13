@@ -99,7 +99,7 @@ class VGNN(nn.Module):
         if self.training:
             # generate non-trainable random parameter epsilon from standard normal distribution
             eps = torch.randn_like(mean)
-            return eps * sigma.exp() * 0.5 + mean
+            return eps * (sigma * 0.5).exp() + mean
         else:
             return mean
 
