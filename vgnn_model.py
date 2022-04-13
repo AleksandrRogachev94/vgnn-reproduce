@@ -147,6 +147,6 @@ class VGNN(nn.Module):
 
         # Apply fully connected layers to the final node representation to get a single prediction
         prediction = self.out_layer(torch.stack(batch_decoded))
-        total_kld = torch.sum(torch.stack(kld))
+        total_kld = torch.sum(torch.stack(kld)) if self.variational else torch.tensor(0.0)
         return prediction, total_kld
     
