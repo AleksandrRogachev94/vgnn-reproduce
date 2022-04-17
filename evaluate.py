@@ -42,7 +42,7 @@ def main():
 
     # Load data
     test_x, test_y = pickle.load(open(data_path + 'train_csr.pkl', 'rb'))
-    positive = test_y == 0
+    positive = test_y == 1
     test_x = test_x[positive]
     test_y = test_y[positive]
 
@@ -58,7 +58,7 @@ def main():
     print('Loaded existing model from: {}'.format(model_path))
 
     test_loader = DataLoader(dataset=EHRData(test_x, test_y), batch_size=BATCH_SIZE,
-                            collate_fn=collate_fn, num_workers=torch.cuda.device_count(), shuffle=False)
+                            collate_fn=collate_fn, num_workers=torch.cuda.device_count(), shuffle=True)
 
     test_auprc, _ = evaluate(model, test_loader, len(test_y))
     print('AUPRC: %f' % (test_auprc))
