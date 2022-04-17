@@ -12,7 +12,7 @@ else:
 print(device)
 
 # TODO remove. Just for testing
-torch.manual_seed(0)
+# torch.manual_seed(0)
 
 def main():
     parser = argparse.ArgumentParser(description='configurations')
@@ -41,7 +41,10 @@ def main():
     none_graph_features = args.none_graph_features
 
     # Load data
-    test_x, test_y = pickle.load(open(data_path + 'test_csr.pkl', 'rb'))
+    test_x, test_y = pickle.load(open(data_path + 'train_csr.pkl', 'rb'))
+    positive = test_y == 0
+    test_x = test_x[positive]
+    test_y = test_y[positive]
 
     # initialize models
     device_ids = range(torch.cuda.device_count())
@@ -51,7 +54,7 @@ def main():
     model = nn.DataParallel(model, device_ids=device_ids)
 
     # Load existing model, take into account the last epoch
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     print('Loaded existing model from: {}'.format(model_path))
 
     test_loader = DataLoader(dataset=EHRData(test_x, test_y), batch_size=BATCH_SIZE,
