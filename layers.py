@@ -8,6 +8,8 @@ if torch.cuda.is_available():
 else:
     device = 'cpu'
 
+NUM_SINGULAR_VALUES = 10
+
 class LayerNorm(nn.Module):
     def __init__(self, features, eps=1e-6):
         super(LayerNorm, self).__init__()
@@ -68,16 +70,15 @@ class GraphAttentionLayer(nn.Module):
         if self.name == 'encoder_attention_0_0':
             # Run SVD analysis
             svd_attentions = (edge_e.to_dense().div(e_rowsum)).detach().numpy()
-            # remove zero rows
-            svd_attentions = svd_attentions[~np.all(svd_attentions == 0, axis=1)]
-            # remove zero columns
-            idx = np.argwhere(np.all(svd_attentions[..., :] == 0, axis=0))
-            svd_attentions = np.delete(svd_attentions, idx, axis=1)
-            # Apply SVD and capture singular values
-            u, s, vh = np.linalg.svd(svd_attentions)
-            self.singular_values.append(s[1:10])
-            print("Singular value median values")
-            print(np.median(np.array(self.singular_values), axis=0))
+            unique_edges = edge.unique()
+            svd_attentions = svd_attentions[unique_edges, :][:, unique_edges]
+
+            if svd_attentions.shape[0] >= NUM_SINGULAR_VALUES:
+                # Apply SVD and capture singular values
+                u, s, vh = np.linalg.svd(svd_attentions)
+                self.singular_values.append(s[1:NUM_SINGULAR_VALUES])
+                print("Singular value median values")
+                print(np.median(np.array(self.singular_values), axis=0))
 
         # for missing nodes, ensure that attention is 1 for node itself.
         edge_e = edge_e.add(
