@@ -26,7 +26,7 @@ class VGNN(nn.Module):
 
         # + 1 for the "new" node in the decoder (m = 1 in the paper).
         # This new node is fully connected with all encoder output nodes
-        self.embed = nn.Embedding(self.input_features + 1, enc_features, padding_idx=0)
+        self.embed = nn.Embedding(self.input_features + 1, enc_features)
 
         # Multiple multi-headed self-attention encoder layers.
         self.encoder = [
