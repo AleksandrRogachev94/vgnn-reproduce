@@ -8,6 +8,8 @@ if torch.cuda.is_available():
 else:
     device = 'cpu'
 
+NUM_SINGULAR_VALUES = 10
+
 class LayerNorm(nn.Module):
     def __init__(self, features, eps=1e-6):
         super(LayerNorm, self).__init__()
@@ -23,11 +25,12 @@ class LayerNorm(nn.Module):
 
 # Single sparse self-attention head.
 class GraphAttentionLayer(nn.Module):
-    def __init__(self, in_features, out_features, alpha):
+    def __init__(self, in_features, out_features, alpha, name):
         super(GraphAttentionLayer, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.alpha = alpha
+        self.name = name
 
         # Weights matrix
         self.W = nn.Linear(in_features, out_features)
@@ -37,6 +40,9 @@ class GraphAttentionLayer(nn.Module):
         nn.init.xavier_normal_(self.a.data)
 
         self.leakyrelu = nn.LeakyReLU(self.alpha)
+
+        # Singular values used for analysis of a trained model
+        self.singular_values = []
 
     # Adapted from original code
     def attention(self, linear, a, N, data, edge):
@@ -60,6 +66,20 @@ class GraphAttentionLayer(nn.Module):
         row_check = e_rowsum == 0
         e_rowsum[row_check] = 1
         zero_idx = row_check.nonzero()[:, 0]
+
+        if self.name == 'encoder_attention_0_0':
+            # Run SVD analysis
+            svd_attentions = (edge_e.to_dense().div(e_rowsum)).detach().numpy()
+            unique_edges = edge.unique()
+            svd_attentions = svd_attentions[unique_edges, :][:, unique_edges]
+
+            if svd_attentions.shape[0] >= NUM_SINGULAR_VALUES:
+                # Apply SVD and capture singular values
+                u, s, vh = np.linalg.svd(svd_attentions)
+                self.singular_values.append(s[1:NUM_SINGULAR_VALUES])
+                print("Singular value median values")
+                print(np.median(np.array(self.singular_values), axis=0))
+
         # for missing nodes, ensure that attention is 1 for node itself.
         edge_e = edge_e.add(
             torch.sparse.FloatTensor(zero_idx.repeat(2, 1), torch.ones(len(zero_idx)).to(device), torch.Size([N, N])))
@@ -90,8 +110,8 @@ class MultiHeadedGraphAttentionLayer(nn.Module):
         self.concat = concat
 
         self.attentions = [
-            GraphAttentionLayer(in_features, out_features, alpha=alpha)
-            for _ in range(num_heads)
+            GraphAttentionLayer(in_features, out_features, alpha=alpha, name='{}_{}'.format(name, i))
+            for i in range(num_heads)
         ]
         for i, attention in enumerate(self.attentions):
             self.add_module('{}_{}'.format(name, i), attention)
